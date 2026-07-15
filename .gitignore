@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.env.local
+coverage/
+
+# Vite / React config UI build output
+src/ui/dist/
+src/ui/node_modules/

@@ -1,0 +1,43 @@
+{
+  "name": "mirante",
+  "version": "0.0.0",
+  "description": "A glanceable macOS menu bar overview of every active Claude CLI session: live status, task-progress %, and a plain-language recap.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "macos",
+    "menubar",
+    "swiftbar",
+    "cli",
+    "sessions",
+    "monitor"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "mirante": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "assets"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -w -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  }
+}
