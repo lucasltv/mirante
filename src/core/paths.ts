@@ -1,8 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** Root of the Claude CLI user data directory. */
-export const CLAUDE_HOME = join(homedir(), ".claude");
+/**
+ * Root of the Claude CLI user data directory. Honors `CLAUDE_CONFIG_DIR`
+ * (the same override Claude Code itself respects), which also gives tests a
+ * clean seam to point at a synthetic fixture directory.
+ */
+export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 
 /** Native Claude Code data (read-only from Mirante's perspective). */
 export const CLAUDE_TASKS_DIR = join(CLAUDE_HOME, "tasks");
@@ -17,7 +21,7 @@ export const MIRANTE_LIVE_DIR = join(MIRANTE_HOME, "live");
 /** Summarizer-owned: one file per session with the plain-language recap. */
 export const MIRANTE_SUMMARY_DIR = join(MIRANTE_HOME, "summary");
 
-/** Per-session native task directory: `~/.claude/tasks/<sessionId>/`. */
+/** Per-session native task directory: `<claude-home>/tasks/<sessionId>/`. */
 export function claudeTasksDirFor(sessionId: string): string {
   return join(CLAUDE_TASKS_DIR, sessionId);
 }
