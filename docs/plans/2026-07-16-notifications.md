@@ -453,7 +453,7 @@ export function buildInput(argv: string[]): NotifyInput | null {
 export async function runNotify(argv: string[], deps?: NotifyDeps): Promise<void> {
   const input = buildInput(argv);
   if (!input) return;
-  const config = loadConfig();
+  const config = await loadConfig();
   await notify(input, config, deps);
 }
 
