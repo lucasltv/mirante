@@ -127,6 +127,14 @@ const EMPTY_USAGE: Usage = {
   estimatedCostUsd: null,
 };
 
+/**
+ * Claude Code injects assistant lines with this sentinel "model". They carry
+ * token usage but no real, priceable model — so they count toward totals but are
+ * excluded from per-model cost (they must not null out an otherwise-known cost)
+ * and are never reported as the active model.
+ */
+const SYNTHETIC_MODEL = "<synthetic>";
+
 function addUsage(target: RawUsageTotals, u: Record<string, number>): void {
   target.inputTokens += u.input_tokens ?? 0;
   target.outputTokens += u.output_tokens ?? 0;
@@ -165,11 +173,13 @@ export async function readTranscriptDigest(sessionId: string): Promise<Transcrip
     }
     if (line.type !== "assistant") continue;
     const message = line.message as { model?: string; usage?: Record<string, number> } | undefined;
-    if (message?.model) model = message.model;
+    const lineModel = message?.model;
+    if (lineModel && lineModel !== SYNTHETIC_MODEL) model = lineModel;
     const u = message?.usage;
     if (!u) continue;
-    addUsage(totals, u);
-    const key = message?.model ?? "";
+    addUsage(totals, u); // synthetic tokens still count toward totals
+    if (lineModel === SYNTHETIC_MODEL) continue; // ...but not toward priced per-model cost
+    const key = lineModel ?? "";
     const bucket = perModel.get(key) ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
     addUsage(bucket, u);
     perModel.set(key, bucket);
