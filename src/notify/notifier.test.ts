@@ -99,4 +99,10 @@ describe("notify", () => {
     const deps = fakeDeps({ resolveTerminalNotifier: async () => null, run: async () => { throw new Error("nope"); } });
     await expect(notify(BASE_INPUT, cfg(), deps)).resolves.toBeUndefined();
   });
+
+  it("survives a rejecting resolveTerminalNotifier by falling back to osascript", async () => {
+    const deps = fakeDeps({ resolveTerminalNotifier: async () => { throw new Error("resolver boom"); } });
+    await expect(notify(BASE_INPUT, cfg(), deps)).resolves.toBeUndefined();
+    expect(deps.calls.at(-1)![0]).toBe("osascript");
+  });
 });

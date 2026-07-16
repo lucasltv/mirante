@@ -97,7 +97,12 @@ export async function notify(
     ? `"${INSTALLED_FOCUS_SCRIPT}" ${input.focus.mode} ${shellQuote(input.focus.target)}`
     : undefined;
 
-  const tn = await deps.resolveTerminalNotifier();
+  let tn: string | null;
+  try {
+    tn = await deps.resolveTerminalNotifier();
+  } catch {
+    tn = null; // a failing resolver must not break the never-throws guarantee
+  }
   if (tn) {
     const args = ["-title", title, "-message", body];
     if (sound) args.push("-sound", sound);
