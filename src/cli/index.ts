@@ -14,6 +14,8 @@
 
 import { loadConfig } from "../core/config.js";
 import { buildSessionViews } from "../collect/enrich.js";
+import { install, uninstall } from "../install/installer.js";
+import { runDoctor } from "../install/doctor.js";
 
 type Command = "install" | "uninstall" | "config" | "doctor";
 
@@ -34,11 +36,29 @@ function usage(): void {
 async function main(): Promise<void> {
   const cmd = process.argv[2];
   switch (cmd) {
-    case "install":
-    case "uninstall":
+    case "install": {
+      const result = await install();
+      process.stdout.write(`mirante: hooks installed (${result.hookInstalledAt}).\n`);
+      if (result.backupPath) process.stdout.write(`mirante: settings backed up to ${result.backupPath}.\n`);
+      process.stdout.write("mirante: restart your Claude sessions for hooks to take effect.\n");
+      return;
+    }
+    case "uninstall": {
+      const result = await uninstall();
+      process.stdout.write("mirante: hooks removed from settings.json.\n");
+      if (result.backupPath) process.stdout.write(`mirante: settings backed up to ${result.backupPath}.\n`);
+      return;
+    }
+    case "doctor": {
+      const report = await runDoctor();
+      for (const c of report.checks) {
+        process.stdout.write(`${c.ok ? "✓" : "✗"} ${c.label} — ${c.detail}\n`);
+      }
+      process.exitCode = report.ok ? 0 : 1;
+      return;
+    }
     case "config":
-    case "doctor":
-      process.stdout.write(`mirante ${cmd}: not implemented yet\n`);
+      process.stdout.write("mirante config: not implemented yet\n");
       process.exitCode = 1;
       return;
     case "status": {
