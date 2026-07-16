@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import { CLAUDE_SETTINGS_FILE, INSTALLED_HOOK_SCRIPT, MIRANTE_LIVE_DIR } from "../core/paths.js";
+import { CLAUDE_SETTINGS_FILE, INSTALLED_HOOK_SCRIPT, INSTALLED_FOCUS_SCRIPT, MIRANTE_LIVE_DIR } from "../core/paths.js";
 import { hasMiranteHooks, type Settings } from "./settingsMerge.js";
 
 const execFileAsync = promisify(execFile);
@@ -66,6 +66,31 @@ export async function runDoctor(): Promise<DoctorReport> {
   }
   checks.push({ id: "live-dir", label: "live/ directory exists", ok: liveOk, detail: liveOk ? MIRANTE_LIVE_DIR : "created on first hook event" });
 
-  const ok = checks.filter((c) => c.id !== "live-dir").every((c) => c.ok);
+  // 5. focus helper present (installed alongside the hook)
+  let focusOk = false;
+  try {
+    await access(INSTALLED_FOCUS_SCRIPT);
+    focusOk = true;
+  } catch {
+    focusOk = false;
+  }
+  checks.push({
+    id: "focus-script-present",
+    label: "click-to-focus helper installed",
+    ok: focusOk,
+    detail: focusOk ? INSTALLED_FOCUS_SCRIPT : "run `mirante install`",
+  });
+
+  // 6. terminal-notifier (informational — osascript fallback works without it)
+  const tnOk = await commandExists("terminal-notifier");
+  checks.push({
+    id: "terminal-notifier",
+    label: "terminal-notifier installed (clickable notifications)",
+    ok: tnOk,
+    detail: tnOk ? "found" : "optional: brew install terminal-notifier (falls back to osascript)",
+  });
+
+  const informational = new Set(["live-dir", "terminal-notifier"]);
+  const ok = checks.filter((c) => !informational.has(c.id)).every((c) => c.ok);
   return { ok, checks };
 }

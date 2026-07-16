@@ -3,7 +3,6 @@ import { makeFixture } from "../../test/fixtures.js";
 
 describe("install / uninstall", () => {
   let fx: ReturnType<typeof makeFixture> | undefined;
-  let hookSource: string;
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { fx?.cleanup(); fx = undefined; delete process.env.CLAUDE_CONFIG_DIR; vi.resetModules(); });
 
@@ -14,14 +13,17 @@ describe("install / uninstall", () => {
     await writeFile(join(home, "settings.json"), JSON.stringify(obj, null, 2));
   }
 
-  async function makeHookSource(): Promise<string> {
+  /** A temp hook source (with placeholders) plus a focus-helper source. */
+  async function makeHookSource(): Promise<{ hook: string; focus: string }> {
     const { mkdtempSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const dir = mkdtempSync(join(tmpdir(), "mirante-hooksrc-"));
-    const p = join(dir, "mirante-hook.sh");
-    writeFileSync(p, "#!/usr/bin/env bash\nexit 0\n");
-    return p;
+    const hook = join(dir, "mirante-hook.sh");
+    writeFileSync(hook, "#!/usr/bin/env bash\nexit 0\n");
+    const focus = join(dir, "focus-terminal.sh");
+    writeFileSync(focus, "#!/usr/bin/env bash\nexit 0\n");
+    return { hook, focus };
   }
 
   it("backs up, merges hooks, and copies the hook script", async () => {
@@ -30,10 +32,10 @@ describe("install / uninstall", () => {
     await writeSettings(fx.home, {
       hooks: { Notification: [{ hooks: [{ type: "command", command: "\"/x/notify-focus.sh\" Notification" }] }] },
     });
-    hookSource = await makeHookSource();
+    const src = await makeHookSource();
 
     const { install } = await import("./installer.js?i=1");
-    const result = await install(hookSource);
+    const result = await install(src.hook, { focusSource: src.focus });
 
     const { readFile, access, stat } = await import("node:fs/promises");
     const { join } = await import("node:path");
@@ -53,10 +55,10 @@ describe("install / uninstall", () => {
     fx = makeFixture();
     process.env.CLAUDE_CONFIG_DIR = fx.home;
     await writeSettings(fx.home, {});
-    hookSource = await makeHookSource();
+    const src = await makeHookSource();
     const { install } = await import("./installer.js?i=2");
-    await install(hookSource);
-    await install(hookSource);
+    await install(src.hook, { focusSource: src.focus });
+    await install(src.hook, { focusSource: src.focus });
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const settings = JSON.parse(await readFile(join(fx.home, "settings.json"), "utf8"));
@@ -70,9 +72,9 @@ describe("install / uninstall", () => {
     await writeSettings(fx.home, {
       hooks: { SessionStart: [{ hooks: [{ type: "command", command: "\"/x/context-mode.mjs\"" }] }] },
     });
-    hookSource = await makeHookSource();
+    const src = await makeHookSource();
     const { install, uninstall } = await import("./installer.js?i=3");
-    await install(hookSource);
+    await install(src.hook, { focusSource: src.focus });
     await uninstall();
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
@@ -90,10 +92,10 @@ describe("install / uninstall", () => {
     const { writeFile, readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     await writeFile(join(fx.home, "settings.json"), corrupt);
-    hookSource = await makeHookSource();
+    const src = await makeHookSource();
 
     const { install } = await import("./installer.js?i=5");
-    await expect(install(hookSource)).rejects.toThrow(/not valid JSON/);
+    await expect(install(src.hook, { focusSource: src.focus })).rejects.toThrow(/not valid JSON/);
     // original file left byte-for-byte intact — no silent overwrite
     expect(await readFile(join(fx.home, "settings.json"), "utf8")).toBe(corrupt);
     // a backup of the corrupt file was written
@@ -113,13 +115,43 @@ describe("install / uninstall", () => {
   it("install works when no settings.json exists yet", async () => {
     fx = makeFixture();
     process.env.CLAUDE_CONFIG_DIR = fx.home;
-    hookSource = await makeHookSource();
+    const src = await makeHookSource();
     const { install } = await import("./installer.js?i=4");
-    const result = await install(hookSource);
+    const result = await install(src.hook, { focusSource: src.focus });
     expect(result.backupPath).toBeNull(); // nothing to back up
     const { readFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const settings = JSON.parse(await readFile(join(fx.home, "settings.json"), "utf8"));
     expect(settings.hooks.SessionStart.length).toBeGreaterThan(0);
+  });
+
+  it("templates node + runner paths into the copied hook and copies focus-terminal.sh", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    await writeSettings(fx.home, {});
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "mirante-notifysrc-"));
+    const hookSource = join(dir, "mirante-hook.sh");
+    writeFileSync(
+      hookSource,
+      '#!/usr/bin/env bash\nMIRANTE_NODE="@@MIRANTE_NODE@@"\nMIRANTE_NOTIFY_RUNNER="@@MIRANTE_NOTIFY_RUNNER@@"\nexit 0\n',
+    );
+    const focusSource = join(dir, "focus-terminal.sh");
+    writeFileSync(focusSource, "#!/usr/bin/env bash\nexit 0\n");
+    const runner = join(dir, "run.js");
+    writeFileSync(runner, "// runner\n");
+
+    const { install } = await import("./installer.js?i=notify1");
+    await install(hookSource, { notifyRunner: runner, focusSource, nodeBin: "/opt/homebrew/bin/node" });
+
+    const { readFile, stat } = await import("node:fs/promises");
+    const installedHook = await readFile(join(fx.home, "hooks", "mirante-hook.sh"), "utf8");
+    expect(installedHook).toContain('MIRANTE_NODE="/opt/homebrew/bin/node"');
+    expect(installedHook).toContain(`MIRANTE_NOTIFY_RUNNER="${runner}"`);
+    expect(installedHook).not.toContain("@@");
+    const focusStat = await stat(join(fx.home, "hooks", "focus-terminal.sh"));
+    expect(focusStat.mode & 0o111).not.toBe(0);
   });
 });
