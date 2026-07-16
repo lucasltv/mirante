@@ -9,3 +9,6 @@ coverage/
 # Vite / React config UI build output
 src/ui/dist/
 src/ui/node_modules/
+
+# Editor local history
+.history/
