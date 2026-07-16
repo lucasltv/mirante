@@ -56,6 +56,18 @@ Mirante also **subsumes** the user's existing clickable-notification hooks
 - Non-macOS platforms.
 - Remote / mobile access.
 
+### Roadmap — next release: Claude account plan usage
+Surface the Claude _account-level_ usage/limits alongside the per-session view
+(the panel behind Claude Code's `/usage`): current-session % used + reset
+countdown, and the weekly limits — "all models" plus per-model (e.g. Fable) —
+each with its reset time and % used. This is distinct from the per-session
+token/cost estimate already in MVP scope (§5): it is the plan's rolling
+consumption against the subscription (e.g. Max 20x), not one session's spend.
+Source to be confirmed during design (likely the same data Claude Code's
+`/usage` reads; verify whether it is exposed under `~/.claude` or requires an
+authenticated endpoint). Render as a compact meter row in the widget header and
+optionally in the config UI.
+
 ## 3. Architecture
 
 No always-on daemon. Hooks stamp events (fast); the widget refresh computes
