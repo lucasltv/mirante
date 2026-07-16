@@ -19,6 +19,9 @@ export const CLAUDE_HOOKS_DIR = join(CLAUDE_HOME, "hooks");
 /** Destination of Mirante's copied hook script. */
 export const INSTALLED_HOOK_SCRIPT = join(CLAUDE_HOOKS_DIR, "mirante-hook.sh");
 
+/** Destination of Mirante's copied click-to-focus helper. */
+export const INSTALLED_FOCUS_SCRIPT = join(CLAUDE_HOOKS_DIR, "focus-terminal.sh");
+
 /** Mirante-owned state, kept under the Claude home so it travels with it. */
 export const MIRANTE_HOME = join(CLAUDE_HOME, "mirante");
 export const MIRANTE_CONFIG_FILE = join(MIRANTE_HOME, "config.json");
