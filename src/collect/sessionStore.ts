@@ -38,6 +38,7 @@ export async function readTaskProgress(sessionId: string): Promise<TaskProgress>
     } catch {
       continue;
     }
+    if (!task || typeof task !== "object") continue;
     switch (task.status) {
       case "completed":
         completed++;
