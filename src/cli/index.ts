@@ -12,6 +12,9 @@
  * Command implementations follow the plan; this is the dispatch skeleton.
  */
 
+import { loadConfig } from "../core/config.js";
+import { buildSessionViews } from "../collect/enrich.js";
+
 type Command = "install" | "uninstall" | "config" | "doctor";
 
 const COMMANDS: Record<Command, string> = {
@@ -29,7 +32,7 @@ function usage(): void {
 }
 
 async function main(): Promise<void> {
-  const cmd = process.argv[2] as Command | undefined;
+  const cmd = process.argv[2];
   switch (cmd) {
     case "install":
     case "uninstall":
@@ -38,6 +41,14 @@ async function main(): Promise<void> {
       process.stdout.write(`mirante ${cmd}: not implemented yet\n`);
       process.exitCode = 1;
       return;
+    case "status": {
+      // Hidden debug command: print the enriched SessionViews as JSON so the
+      // collector can be eyeballed before the SwiftBar widget exists.
+      const config = await loadConfig();
+      const views = await buildSessionViews(config);
+      process.stdout.write(JSON.stringify(views, null, 2) + "\n");
+      return;
+    }
     default:
       usage();
       process.exitCode = cmd ? 1 : 0;
