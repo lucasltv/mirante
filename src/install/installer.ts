@@ -21,21 +21,42 @@ export function defaultHookSource(): string {
   return join(here, "..", "collect", "hooks", "mirante-hook.sh");
 }
 
-async function readSettings(): Promise<{ settings: Settings; existed: boolean; raw: string | null }> {
+interface SettingsRead {
+  /** Parsed settings, or null when the file exists but is not valid JSON. */
+  settings: Settings | null;
+  /** Whether a settings.json is on disk at all (valid or not). */
+  existed: boolean;
+  /** Raw contents when the file exists, kept for backup. */
+  raw: string | null;
+}
+
+async function readSettings(): Promise<SettingsRead> {
+  let raw: string;
   try {
-    const raw = await readFile(CLAUDE_SETTINGS_FILE, "utf8");
+    raw = await readFile(CLAUDE_SETTINGS_FILE, "utf8");
+  } catch {
+    // No file (or unreadable): a fresh install target.
+    return { settings: {}, existed: false, raw: null };
+  }
+  try {
     return { settings: JSON.parse(raw) as Settings, existed: true, raw };
   } catch {
-    return { settings: {}, existed: false, raw: null };
+    // Present but corrupt — surface it; never silently clobber the user's file.
+    return { settings: null, existed: true, raw };
   }
 }
 
+/** Back up raw settings to a timestamped file so no earlier backup is lost. */
 async function backup(raw: string | null): Promise<string | null> {
   if (raw === null) return null;
-  const backupPath = `${CLAUDE_SETTINGS_FILE}.mirante.bak`;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = `${CLAUDE_SETTINGS_FILE}.mirante-${stamp}.bak`;
   await writeFile(backupPath, raw);
   return backupPath;
 }
+
+const CORRUPT_MSG =
+  "settings.json exists but is not valid JSON; a backup was saved alongside it — fix the file, then re-run.";
 
 async function writeSettingsAtomic(settings: Settings): Promise<void> {
   await mkdir(dirname(CLAUDE_SETTINGS_FILE), { recursive: true });
@@ -48,6 +69,7 @@ async function writeSettingsAtomic(settings: Settings): Promise<void> {
 export async function install(hookSource: string = defaultHookSource()): Promise<InstallResult> {
   const { settings, raw } = await readSettings();
   const backupPath = await backup(raw);
+  if (settings === null) throw new Error(CORRUPT_MSG);
 
   await mkdir(CLAUDE_HOOKS_DIR, { recursive: true });
   await copyFile(hookSource, INSTALLED_HOOK_SCRIPT);
@@ -64,6 +86,7 @@ export async function uninstall(): Promise<{ backupPath: string | null }> {
   const { settings, raw, existed } = await readSettings();
   if (!existed) return { backupPath: null };
   const backupPath = await backup(raw);
+  if (settings === null) throw new Error(CORRUPT_MSG);
   const cleaned = removeMiranteHooks(settings);
   await writeSettingsAtomic(cleaned);
   return { backupPath };

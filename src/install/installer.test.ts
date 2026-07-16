@@ -82,6 +82,34 @@ describe("install / uninstall", () => {
     expect(ss.some((c: string) => c.includes("mirante-hook.sh"))).toBe(false);
   });
 
+  it("refuses to clobber a corrupt settings.json (backs it up, leaves it intact)", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    const corrupt = "{ this is : not json ";
+    await writeSettings(fx.home, {}); // create the dir
+    const { writeFile, readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    await writeFile(join(fx.home, "settings.json"), corrupt);
+    hookSource = await makeHookSource();
+
+    const { install } = await import("./installer.js?i=5");
+    await expect(install(hookSource)).rejects.toThrow(/not valid JSON/);
+    // original file left byte-for-byte intact — no silent overwrite
+    expect(await readFile(join(fx.home, "settings.json"), "utf8")).toBe(corrupt);
+    // a backup of the corrupt file was written
+    const { readdir } = await import("node:fs/promises");
+    const baks = (await readdir(fx.home)).filter((f) => f.includes(".mirante-") && f.endsWith(".bak"));
+    expect(baks.length).toBeGreaterThan(0);
+  });
+
+  it("uninstall is a no-op when no settings.json exists", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    const { uninstall } = await import("./installer.js?i=6");
+    const result = await uninstall();
+    expect(result.backupPath).toBeNull();
+  });
+
   it("install works when no settings.json exists yet", async () => {
     fx = makeFixture();
     process.env.CLAUDE_CONFIG_DIR = fx.home;

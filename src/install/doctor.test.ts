@@ -15,6 +15,19 @@ describe("runDoctor", () => {
     expect(wiring?.ok).toBe(false);
   });
 
+  it("reports settings-not-readable when settings.json is corrupt", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    await mkdir(fx.home, { recursive: true });
+    await writeFile(join(fx.home, "settings.json"), "{ broken json");
+    const { runDoctor } = await import("./doctor.js?d=3");
+    const report = await runDoctor();
+    expect(report.checks.find((c) => c.id === "settings-readable")?.ok).toBe(false);
+    expect(report.ok).toBe(false);
+  });
+
   it("reports hooks-wired and script-present after a merge + copy", async () => {
     fx = makeFixture();
     process.env.CLAUDE_CONFIG_DIR = fx.home;
