@@ -84,6 +84,33 @@ describe("readUsage", () => {
     expect(u.inputTokens).toBe(0);
     expect(u.estimatedCostUsd).toBeNull();
   });
+
+  it("prices each turn by its own model in a multi-model session", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    fx.addTranscript("proj", "s1", [
+      { type: "assistant", message: { model: "claude-opus-4-8", usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+      { type: "assistant", message: { model: "claude-sonnet-5", usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+    ]);
+    const { readUsage } = await import("./sessionStore.js?u=3");
+    const u = await readUsage("s1");
+    expect(u.inputTokens).toBe(2_000_000);
+    // opus 1M input @ $15 + sonnet 1M input @ $3 = $18 — NOT (2M @ last model's rate)
+    expect(u.estimatedCostUsd).toBeCloseTo(18, 5);
+  });
+
+  it("returns a null cost when any contributing model has no pricing row", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    fx.addTranscript("proj", "s1", [
+      { type: "assistant", message: { model: "claude-sonnet-5", usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+      { type: "assistant", message: { model: "claude-opus-4-7", usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+    ]);
+    const { readUsage } = await import("./sessionStore.js?u=4");
+    const u = await readUsage("s1");
+    expect(u.inputTokens).toBe(2_000_000);
+    expect(u.estimatedCostUsd).toBeNull(); // claude-opus-4-7 has no price row → honest null
+  });
 });
 
 describe("readNativeRecap", () => {
@@ -147,6 +174,13 @@ describe("readLiveRecords", () => {
     process.env.CLAUDE_CONFIG_DIR = fx.home;
     fx.addLiveRecord("s1", { sessionId: "s1", state: "working", cwd: "/x", ts: "2026-07-15T10:00:00Z" });
     fx.addLiveRecord("s2", { sessionId: "s2", state: "awaiting-input", cwd: "/y", ts: "2026-07-15T10:01:00Z" });
+    // Drop two files that must be skipped: unparseable JSON, and valid JSON that
+    // isn't a live record (missing sessionId/state).
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const liveDir = join(fx.home, "mirante", "live");
+    writeFileSync(join(liveDir, "bad.json"), "{ not json");
+    writeFileSync(join(liveDir, "partial.json"), JSON.stringify({ foo: 1 }));
     const { readLiveRecords } = await import("./sessionStore.js?l=1");
     const recs = await readLiveRecords();
     const ids = recs.map((r) => r.sessionId).sort();
@@ -158,5 +192,39 @@ describe("readLiveRecords", () => {
     process.env.CLAUDE_CONFIG_DIR = fx.home;
     const { readLiveRecords } = await import("./sessionStore.js?l=2");
     expect(await readLiveRecords()).toEqual([]);
+  });
+});
+
+describe("readStoredSummary", () => {
+  let fx: ReturnType<typeof makeFixture> | undefined;
+  afterEach(() => { fx?.cleanup(); fx = undefined; delete process.env.CLAUDE_CONFIG_DIR; vi.resetModules(); });
+
+  it("returns the stored summary when present and well-formed", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(fx.home, "mirante", "summary");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "s1.json"), JSON.stringify({ text: "Haiku says", source: "haiku", ts: "t" }));
+    const { readStoredSummary } = await import("./sessionStore.js?s=1");
+    const s = await readStoredSummary("s1");
+    expect(s?.text).toBe("Haiku says");
+    expect(s?.source).toBe("haiku");
+  });
+
+  it("degrades to null on missing, unparseable, or shape-invalid files (never throws)", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(fx.home, "mirante", "summary");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "bad.json"), "{ not json");
+    writeFileSync(join(dir, "shape.json"), JSON.stringify({ nope: 1 })); // no string `text`
+    const { readStoredSummary } = await import("./sessionStore.js?s=2");
+    expect(await readStoredSummary("missing")).toBeNull(); // no file
+    expect(await readStoredSummary("bad")).toBeNull(); // unparseable
+    expect(await readStoredSummary("shape")).toBeNull(); // wrong shape
   });
 });

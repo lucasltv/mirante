@@ -74,4 +74,15 @@ describe("config", () => {
     const { loadConfig, DEFAULT_CONFIG } = await import("./config.js?c=5");
     expect(await loadConfig()).toEqual(DEFAULT_CONFIG);
   });
+
+  it("falls back to defaults when the config file is unparseable JSON", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    await mkdir(join(fx.home, "mirante"), { recursive: true });
+    await writeFile(join(fx.home, "mirante", "config.json"), "{ not valid json");
+    const { loadConfig, DEFAULT_CONFIG } = await import("./config.js?c=6");
+    expect(await loadConfig()).toEqual(DEFAULT_CONFIG);
+  });
 });

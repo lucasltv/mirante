@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
@@ -81,7 +81,7 @@ async function findTranscript(sessionId: string): Promise<string | null> {
   for (const project of projects) {
     const candidate = join(CLAUDE_PROJECTS_DIR, project, `${sessionId}.jsonl`);
     try {
-      await readFile(candidate, "utf8");
+      await access(candidate); // existence check only — don't read the whole file
       return candidate;
     } catch {
       // not in this project dir
@@ -110,50 +110,99 @@ async function readJsonl(path: string): Promise<Array<Record<string, unknown>>> 
   return out;
 }
 
-/** Aggregate token usage + estimated cost from the session transcript. */
-export async function readUsage(sessionId: string): Promise<Usage> {
+/** Everything derived from a single pass over a session transcript. */
+export interface TranscriptDigest {
+  usage: Usage;
+  /** Latest native recap (`away_summary`), or null. */
+  recap: SessionSummary | null;
+  /** Model of the most recent assistant turn, or undefined. */
+  model: string | undefined;
+}
+
+const EMPTY_USAGE: Usage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  estimatedCostUsd: null,
+};
+
+function addUsage(target: RawUsageTotals, u: Record<string, number>): void {
+  target.inputTokens += u.input_tokens ?? 0;
+  target.outputTokens += u.output_tokens ?? 0;
+  target.cacheReadTokens += u.cache_read_input_tokens ?? 0;
+  target.cacheCreationTokens += u.cache_creation_input_tokens ?? 0;
+}
+
+/**
+ * Read a session transcript ONCE and derive usage (with correct per-model cost),
+ * the latest native recap, and the active model. Reading the transcript is the
+ * expensive step; callers that need more than one of these should use the digest
+ * rather than call the individual selectors (which each re-scan).
+ *
+ * Cost is summed per model — a multi-model session prices each turn at its own
+ * model's rate. If any contributing model has no pricing row, the whole estimate
+ * is `null` (honest: better than a wrong number).
+ */
+export async function readTranscriptDigest(sessionId: string): Promise<TranscriptDigest> {
   const path = await findTranscript(sessionId);
-  const empty: Usage = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-    estimatedCostUsd: null,
-  };
-  if (!path) return empty;
+  if (!path) return { usage: { ...EMPTY_USAGE }, recap: null, model: undefined };
   const lines = await readJsonl(path);
+
   const totals: RawUsageTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+  const perModel = new Map<string, RawUsageTotals>();
   let model: string | undefined;
+  let recap: SessionSummary | null = null;
+
   for (const line of lines) {
+    if (line.type === "system" && line.subtype === "away_summary" && typeof line.content === "string") {
+      recap = {
+        text: line.content,
+        source: "recap",
+        ts: typeof line.timestamp === "string" ? line.timestamp : "",
+      };
+      continue;
+    }
     if (line.type !== "assistant") continue;
     const message = line.message as { model?: string; usage?: Record<string, number> } | undefined;
     if (message?.model) model = message.model;
     const u = message?.usage;
     if (!u) continue;
-    totals.inputTokens += u.input_tokens ?? 0;
-    totals.outputTokens += u.output_tokens ?? 0;
-    totals.cacheReadTokens += u.cache_read_input_tokens ?? 0;
-    totals.cacheCreationTokens += u.cache_creation_input_tokens ?? 0;
+    addUsage(totals, u);
+    const key = message?.model ?? "";
+    const bucket = perModel.get(key) ?? { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+    addUsage(bucket, u);
+    perModel.set(key, bucket);
   }
-  return { ...totals, estimatedCostUsd: estimateCost(totals, priceFor(model)) };
+
+  let estimatedCostUsd: number | null;
+  if (perModel.size === 0) {
+    estimatedCostUsd = null;
+  } else {
+    let sum = 0;
+    let unknown = false;
+    for (const [key, bucket] of perModel) {
+      const cost = estimateCost(bucket, priceFor(key || undefined));
+      if (cost === null) {
+        unknown = true;
+        break;
+      }
+      sum += cost;
+    }
+    estimatedCostUsd = unknown ? null : sum;
+  }
+
+  return { usage: { ...totals, estimatedCostUsd }, recap, model };
+}
+
+/** Aggregate token usage + estimated cost from the session transcript. */
+export async function readUsage(sessionId: string): Promise<Usage> {
+  return (await readTranscriptDigest(sessionId)).usage;
 }
 
 /** Latest native recap (`type:"system"`, `subtype:"away_summary"`), or null. */
 export async function readNativeRecap(sessionId: string): Promise<SessionSummary | null> {
-  const path = await findTranscript(sessionId);
-  if (!path) return null;
-  const lines = await readJsonl(path);
-  let latest: SessionSummary | null = null;
-  for (const line of lines) {
-    if (line.type === "system" && line.subtype === "away_summary" && typeof line.content === "string") {
-      latest = {
-        text: line.content,
-        source: "recap",
-        ts: typeof line.timestamp === "string" ? line.timestamp : "",
-      };
-    }
-  }
-  return latest;
+  return (await readTranscriptDigest(sessionId)).recap;
 }
 
 /**
@@ -162,16 +211,7 @@ export async function readNativeRecap(sessionId: string): Promise<SessionSummary
  * does not stamp it); the enricher uses this to populate `SessionView.model`.
  */
 export async function readSessionModel(sessionId: string): Promise<string | undefined> {
-  const path = await findTranscript(sessionId);
-  if (!path) return undefined;
-  const lines = await readJsonl(path);
-  let model: string | undefined;
-  for (const line of lines) {
-    if (line.type !== "assistant") continue;
-    const message = line.message as { model?: string } | undefined;
-    if (message?.model) model = message.model;
-  }
-  return model;
+  return (await readTranscriptDigest(sessionId)).model;
 }
 
 /** Read the summarizer-owned recap for a session, if any. */

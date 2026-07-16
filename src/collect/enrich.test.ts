@@ -60,6 +60,16 @@ describe("buildSessionViews", () => {
     expect(views).toHaveLength(0);
   });
 
+  it("keeps only allow-listed projects when filters.includeProjects is set", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    fx.addLiveRecord("keep", { sessionId: "keep", state: "working", cwd: "/Users/x/Code/mirante", ts: new Date().toISOString() });
+    fx.addLiveRecord("drop", { sessionId: "drop", state: "working", cwd: "/Users/x/Code/other", ts: new Date().toISOString() });
+    const { buildSessionViews } = await import("./enrich.js?e=include");
+    const views = await buildSessionViews(cfg({ filters: { includeProjects: ["mirante"], excludeProjects: [] } }));
+    expect(views.map((v) => v.project)).toEqual(["mirante"]);
+  });
+
   it("marks a session stale when its last event is older than the TTL", async () => {
     fx = makeFixture();
     process.env.CLAUDE_CONFIG_DIR = fx.home;

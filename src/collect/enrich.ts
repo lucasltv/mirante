@@ -4,8 +4,8 @@ import type { SessionView } from "../core/types.js";
 import {
   readLiveRecords,
   readTaskProgress,
-  readUsage,
-  readSessionModel,
+  readTranscriptDigest,
+  readStoredSummary,
   readAliveClaudeCount,
 } from "./sessionStore.js";
 import { resolveSummary } from "./summary.js";
@@ -37,13 +37,18 @@ export async function buildSessionViews(config: MiranteConfig): Promise<SessionV
       const project = basename(rec.cwd || "");
       if (isExcluded(project, config.filters)) return null;
 
-      const [progress, usage, transcriptModel] = await Promise.all([
+      // One transcript scan per session: usage, recap, and model come from the
+      // same digest instead of three separate re-scans.
+      const [progress, digest] = await Promise.all([
         readTaskProgress(rec.sessionId),
-        readUsage(rec.sessionId),
-        rec.model ? Promise.resolve(undefined) : readSessionModel(rec.sessionId),
+        readTranscriptDigest(rec.sessionId),
       ]);
-      const summary = await resolveSummary(rec.sessionId, progress, config);
-      const model = rec.model ?? transcriptModel;
+      const summary = await resolveSummary(rec.sessionId, progress, config, {
+        getRecap: async () => digest.recap,
+        getStored: readStoredSummary,
+      });
+      const usage = digest.usage;
+      const model = rec.model ?? digest.model;
 
       const ageMs = now - Date.parse(rec.ts || "");
       const timedOut = Number.isNaN(ageMs) ? false : ageMs > STALE_TTL_MS;
