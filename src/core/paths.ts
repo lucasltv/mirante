@@ -13,6 +13,12 @@ export const CLAUDE_TASKS_DIR = join(CLAUDE_HOME, "tasks");
 export const CLAUDE_PROJECTS_DIR = join(CLAUDE_HOME, "projects");
 export const CLAUDE_SETTINGS_FILE = join(CLAUDE_HOME, "settings.json");
 
+/** Where Claude Code keeps user hook scripts (matches the user's convention). */
+export const CLAUDE_HOOKS_DIR = join(CLAUDE_HOME, "hooks");
+
+/** Destination of Mirante's copied hook script. */
+export const INSTALLED_HOOK_SCRIPT = join(CLAUDE_HOOKS_DIR, "mirante-hook.sh");
+
 /** Mirante-owned state, kept under the Claude home so it travels with it. */
 export const MIRANTE_HOME = join(CLAUDE_HOME, "mirante");
 export const MIRANTE_CONFIG_FILE = join(MIRANTE_HOME, "config.json");
