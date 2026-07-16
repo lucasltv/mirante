@@ -111,6 +111,23 @@ describe("readUsage", () => {
     expect(u.inputTokens).toBe(2_000_000);
     expect(u.estimatedCostUsd).toBeNull(); // claude-opus-4-7 has no price row → honest null
   });
+
+  it("counts <synthetic> tokens but excludes them from cost and active model", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    // Claude Code injects a `<synthetic>` assistant line with usage but no real,
+    // priceable model. It must not nuke the whole session's cost, nor be reported
+    // as the active model.
+    fx.addTranscript("proj", "s1", [
+      { type: "assistant", message: { model: "claude-opus-4-8", usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+      { type: "assistant", message: { model: "<synthetic>", usage: { input_tokens: 500_000, output_tokens: 0 } } },
+    ]);
+    const { readUsage, readSessionModel } = await import("./sessionStore.js?syn=1");
+    const u = await readUsage("s1");
+    expect(u.inputTokens).toBe(1_500_000); // synthetic tokens still counted in totals
+    expect(u.estimatedCostUsd).toBeCloseTo(15, 5); // opus 1M @ $15; synthetic excluded, NOT null
+    expect(await readSessionModel("s1")).toBe("claude-opus-4-8"); // never "<synthetic>"
+  });
 });
 
 describe("readNativeRecap", () => {
