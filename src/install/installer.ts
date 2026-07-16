@@ -5,6 +5,7 @@ import {
   CLAUDE_SETTINGS_FILE,
   CLAUDE_HOOKS_DIR,
   INSTALLED_HOOK_SCRIPT,
+  INSTALLED_FOCUS_SCRIPT,
 } from "../core/paths.js";
 import { mergeMiranteHooks, removeMiranteHooks, type Settings } from "./settingsMerge.js";
 
@@ -19,6 +20,20 @@ export function defaultHookSource(): string {
   // dist/install/installer.js -> dist/collect/hooks/mirante-hook.sh
   const here = dirname(fileURLToPath(import.meta.url));
   return join(here, "..", "collect", "hooks", "mirante-hook.sh");
+}
+
+/** Default source of the compiled notify runner (relative to the built module). */
+export function defaultNotifyRunner(): string {
+  // dist/install/installer.js -> dist/notify/run.js
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, "..", "notify", "run.js");
+}
+
+/** Default source of the click-to-focus helper (relative to the built module). */
+export function defaultFocusSource(): string {
+  // dist/install/installer.js -> dist/notify/focus-terminal.sh
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, "..", "notify", "focus-terminal.sh");
 }
 
 interface SettingsRead {
@@ -65,15 +80,44 @@ async function writeSettingsAtomic(settings: Settings): Promise<void> {
   await rename(tmp, CLAUDE_SETTINGS_FILE);
 }
 
-/** Install Mirante's hooks: back up, merge, copy the hook script into place. */
-export async function install(hookSource: string = defaultHookSource()): Promise<InstallResult> {
+export interface InstallOptions {
+  /** Absolute path to the compiled notify runner (`dist/notify/run.js`). */
+  notifyRunner?: string;
+  /** Source of the click-to-focus helper to copy into `~/.claude/hooks/`. */
+  focusSource?: string;
+  /** Node binary the hook shells out to; defaults to the running `node`. */
+  nodeBin?: string;
+}
+
+/**
+ * Install Mirante's hooks: back up, template the hook (real node + runner paths)
+ * into place, copy the click-to-focus helper, and merge the hook groups.
+ */
+export async function install(
+  hookSource: string = defaultHookSource(),
+  opts: InstallOptions = {},
+): Promise<InstallResult> {
+  const notifyRunner = opts.notifyRunner ?? defaultNotifyRunner();
+  const focusSource = opts.focusSource ?? defaultFocusSource();
+  const nodeBin = opts.nodeBin ?? process.execPath;
+
   const { settings, raw } = await readSettings();
   const backupPath = await backup(raw);
   if (settings === null) throw new Error(CORRUPT_MSG);
 
   await mkdir(CLAUDE_HOOKS_DIR, { recursive: true });
-  await copyFile(hookSource, INSTALLED_HOOK_SCRIPT);
+
+  // Copy the hook, substituting real node + runner paths for the placeholders.
+  const hookSrc = await readFile(hookSource, "utf8");
+  const hookOut = hookSrc
+    .replaceAll("@@MIRANTE_NODE@@", nodeBin)
+    .replaceAll("@@MIRANTE_NOTIFY_RUNNER@@", notifyRunner);
+  await writeFile(INSTALLED_HOOK_SCRIPT, hookOut);
   await chmod(INSTALLED_HOOK_SCRIPT, 0o755);
+
+  // Copy the click-to-focus helper alongside the hook.
+  await copyFile(focusSource, INSTALLED_FOCUS_SCRIPT);
+  await chmod(INSTALLED_FOCUS_SCRIPT, 0o755);
 
   const merged = mergeMiranteHooks(settings, INSTALLED_HOOK_SCRIPT);
   await writeSettingsAtomic(merged);
