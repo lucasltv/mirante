@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeTasksDirFor, MIRANTE_LIVE_DIR, CLAUDE_PROJECTS_DIR } from "../core/paths.js";
 import type { LiveRecord, TaskProgress, Usage, SessionSummary } from "../core/types.js";
+import { estimateCost, priceFor, type RawUsageTotals } from "../core/pricing.js";
 
 /**
  * Readers over Claude Code's native state plus Mirante's own `live/` records.
@@ -65,22 +66,108 @@ export async function readTaskProgress(sessionId: string): Promise<TaskProgress>
   };
 }
 
+/** Find the transcript path for a session by scanning project dirs. */
+async function findTranscript(sessionId: string): Promise<string | null> {
+  let projects: string[];
+  try {
+    projects = await readdir(CLAUDE_PROJECTS_DIR);
+  } catch {
+    return null;
+  }
+  for (const project of projects) {
+    const candidate = join(CLAUDE_PROJECTS_DIR, project, `${sessionId}.jsonl`);
+    try {
+      await readFile(candidate, "utf8");
+      return candidate;
+    } catch {
+      // not in this project dir
+    }
+  }
+  return null;
+}
+
+/** Parse a JSONL file into objects, skipping malformed lines. */
+async function readJsonl(path: string): Promise<Array<Record<string, unknown>>> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return [];
+  }
+  const out: Array<Record<string, unknown>> = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // skip malformed line
+    }
+  }
+  return out;
+}
+
 /** Aggregate token usage + estimated cost from the session transcript. */
-export async function readUsage(_sessionId: string): Promise<Usage> {
-  // Implemented in Task 6.
-  return {
+export async function readUsage(sessionId: string): Promise<Usage> {
+  const path = await findTranscript(sessionId);
+  const empty: Usage = {
     inputTokens: 0,
     outputTokens: 0,
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
     estimatedCostUsd: null,
   };
+  if (!path) return empty;
+  const lines = await readJsonl(path);
+  const totals: RawUsageTotals = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+  let model: string | undefined;
+  for (const line of lines) {
+    if (line.type !== "assistant") continue;
+    const message = line.message as { model?: string; usage?: Record<string, number> } | undefined;
+    if (message?.model) model = message.model;
+    const u = message?.usage;
+    if (!u) continue;
+    totals.inputTokens += u.input_tokens ?? 0;
+    totals.outputTokens += u.output_tokens ?? 0;
+    totals.cacheReadTokens += u.cache_read_input_tokens ?? 0;
+    totals.cacheCreationTokens += u.cache_creation_input_tokens ?? 0;
+  }
+  return { ...totals, estimatedCostUsd: estimateCost(totals, priceFor(model)) };
 }
 
 /** Latest native recap (`type:"system"`, `subtype:"away_summary"`), or null. */
-export async function readNativeRecap(_sessionId: string): Promise<SessionSummary | null> {
-  // Implemented in Task 6.
-  return null;
+export async function readNativeRecap(sessionId: string): Promise<SessionSummary | null> {
+  const path = await findTranscript(sessionId);
+  if (!path) return null;
+  const lines = await readJsonl(path);
+  let latest: SessionSummary | null = null;
+  for (const line of lines) {
+    if (line.type === "system" && line.subtype === "away_summary" && typeof line.content === "string") {
+      latest = {
+        text: line.content,
+        source: "recap",
+        ts: typeof line.timestamp === "string" ? line.timestamp : "",
+      };
+    }
+  }
+  return latest;
+}
+
+/**
+ * The model of the most recent assistant turn in the transcript, or undefined.
+ * The transcript is the reliable source for the active model (the hot-path hook
+ * does not stamp it); the enricher uses this to populate `SessionView.model`.
+ */
+export async function readSessionModel(sessionId: string): Promise<string | undefined> {
+  const path = await findTranscript(sessionId);
+  if (!path) return undefined;
+  const lines = await readJsonl(path);
+  let model: string | undefined;
+  for (const line of lines) {
+    if (line.type !== "assistant") continue;
+    const message = line.message as { model?: string } | undefined;
+    if (message?.model) model = message.model;
+  }
+  return model;
 }
 
 /** Number of live `claude` processes (0 → all sessions are stale). */
@@ -95,6 +182,5 @@ export async function readLiveRecords(): Promise<LiveRecord[]> {
   return [];
 }
 
-// Referenced by later readers; keep imports used.
+// Referenced by a later reader (Task 7); keep the import used.
 void MIRANTE_LIVE_DIR;
-void CLAUDE_PROJECTS_DIR;
