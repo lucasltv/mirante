@@ -22,6 +22,40 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 EVENT="${1:-Notification}"
 LIVE_DIR="$HOME/.claude/mirante/live"
 
+# Filled in by `mirante install` (kept as placeholders in the shipped source).
+MIRANTE_NODE="@@MIRANTE_NODE@@"
+MIRANTE_NOTIFY_RUNNER="@@MIRANTE_NOTIFY_RUNNER@@"
+
+# Fire a Mirante notification for a lifecycle event. Best-effort: never fails
+# the hook. Resolves the click-focus target here (bash owns $TERM_PROGRAM + tty),
+# then hands off to the TS runner. No-op until `mirante install` fills the paths.
+mirante_notify() {
+  local event="$1" cwd="$2" msg="$3"
+  case "$MIRANTE_NODE" in *@@*) return 0 ;; esac      # not templated yet
+  [ -x "$MIRANTE_NODE" ] || return 0
+  [ -f "$MIRANTE_NOTIFY_RUNNER" ] || return 0
+
+  local proj mode target term dev
+  proj="$(basename "$cwd")"
+  term="${TERM_PROGRAM:-}"
+  case "$term" in
+    vscode)
+      mode="vscode"; target="$proj" ;;
+    Apple_Terminal)
+      dev="$(ps -o tty= -p "$$" 2>/dev/null | tr -d ' ')"
+      if [ -n "$dev" ] && [ "$dev" != "??" ]; then
+        mode="terminal"; target="/dev/$dev"
+      else
+        mode="other"; target=""
+      fi ;;
+    *)
+      mode="other"; target="" ;;
+  esac
+
+  "$MIRANTE_NODE" "$MIRANTE_NOTIFY_RUNNER" "$event" "$mode" "$target" "$proj" "$msg" \
+    >/dev/null 2>&1 || true
+}
+
 # Fail-open wrapper: any error below must not propagate to Claude.
 main() {
   local payload sid cwd tool msg state now
@@ -49,6 +83,11 @@ main() {
     Stop)              state="awaiting-input" ;;
     SessionEnd)        state="ended" ;;
     *)                 state="working" ;;
+  esac
+
+  # Notify on lifecycle events (gated per-event inside the runner via config).
+  case "$EVENT" in
+    Notification|Stop|SessionEnd) mirante_notify "$EVENT" "$cwd" "${msg:-}" ;;
   esac
 
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
