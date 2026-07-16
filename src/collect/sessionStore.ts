@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
-import { claudeTasksDirFor, MIRANTE_LIVE_DIR, CLAUDE_PROJECTS_DIR } from "../core/paths.js";
+import { claudeTasksDirFor, MIRANTE_LIVE_DIR, MIRANTE_SUMMARY_DIR, CLAUDE_PROJECTS_DIR } from "../core/paths.js";
 import type { LiveRecord, TaskProgress, Usage, SessionSummary } from "../core/types.js";
 import { estimateCost, priceFor, type RawUsageTotals } from "../core/pricing.js";
 
@@ -172,6 +172,18 @@ export async function readSessionModel(sessionId: string): Promise<string | unde
     if (message?.model) model = message.model;
   }
   return model;
+}
+
+/** Read the summarizer-owned recap for a session, if any. */
+export async function readStoredSummary(sessionId: string): Promise<SessionSummary | null> {
+  try {
+    const raw = await readFile(join(MIRANTE_SUMMARY_DIR, `${sessionId}.json`), "utf8");
+    const parsed = JSON.parse(raw) as SessionSummary;
+    if (parsed && typeof parsed.text === "string") return parsed;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /** Number of live `claude` processes (0 → all sessions are stale). */
