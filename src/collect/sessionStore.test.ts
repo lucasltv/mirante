@@ -137,3 +137,26 @@ describe("readSessionModel", () => {
     expect(await readSessionModel("none")).toBeUndefined();
   });
 });
+
+describe("readLiveRecords", () => {
+  let fx: ReturnType<typeof makeFixture> | undefined;
+  afterEach(() => { fx?.cleanup(); fx = undefined; delete process.env.CLAUDE_CONFIG_DIR; vi.resetModules(); });
+
+  it("reads all live records, skipping malformed files", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    fx.addLiveRecord("s1", { sessionId: "s1", state: "working", cwd: "/x", ts: "2026-07-15T10:00:00Z" });
+    fx.addLiveRecord("s2", { sessionId: "s2", state: "awaiting-input", cwd: "/y", ts: "2026-07-15T10:01:00Z" });
+    const { readLiveRecords } = await import("./sessionStore.js?l=1");
+    const recs = await readLiveRecords();
+    const ids = recs.map((r) => r.sessionId).sort();
+    expect(ids).toEqual(["s1", "s2"]);
+  });
+
+  it("returns empty when the live dir is absent", async () => {
+    fx = makeFixture();
+    process.env.CLAUDE_CONFIG_DIR = fx.home;
+    const { readLiveRecords } = await import("./sessionStore.js?l=2");
+    expect(await readLiveRecords()).toEqual([]);
+  });
+});
